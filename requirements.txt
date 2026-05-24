@@ -1,0 +1,4 @@
+# requirements.txt — SQL Server MCP Server
+mcp[cli]>=1.9.0          # SDK oficial de MCP (incluye FastMCP)
+pyodbc>=5.1.0            # Driver ODBC para SQL Server
+python-dotenv>=1.0.0     # Carga de .env (opcional, el código lo hace manualmente también)
