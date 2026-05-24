@@ -53,7 +53,7 @@ cp .env.example .env
 | `MSSQL_TIMEOUT` | Timeout de conexión en segundos | `30` |
 | `MSSQL_POOL_SIZE` | Tamaño del pool de conexiones | `5` |
 | `MSSQL_CHAR_ENCODING` | Encoding de columnas VARCHAR (cp1252, latin-1, utf-8) | `cp1252` |
-| `MSSQL_ALLOWED_OPS` | Ops habilitadas (csv) | `select,insert,update,delete,exec_sp,ddl` |
+| `MSSQL_ALLOWED_OPS` | Ops habilitadas (csv) | `select,insert,update,delete,exec_sp,ddl,ddl_sp` |
 | `MSSQL_ALLOWED_SCHEMAS` | Schemas permitidos (vacío = todos) | — |
 | `MSSQL_DDL_TABLE_PREFIX` | Prefijo requerido para DDL (vacío = sin restricción) | — |
 | `MSSQL_LOG_QUERIES` | Loggear queries ejecutadas | `true` |
@@ -64,7 +64,7 @@ cp .env.example .env
 ## Arranque manual (prueba)
 
 ```bash
-# Modo stdio (para Claude Desktop / Claude Code)
+# Modo stdio (para OpenCode)
 python server.py
 
 # Modo HTTP (para agentes remotos)
@@ -122,6 +122,9 @@ Agrega esto a tu archivo de configuración de OpenCode (`opencode.json` o `openc
 | `tool_list_stored_procedures` | Lista SPs del schema |
 | `tool_describe_stored_procedure` | Muestra parámetros del SP (incluye opcionales) |
 | `tool_execute_sp` | Ejecuta SP con parámetros nombrados opcionales |
+| `tool_create_sp` | Crea un nuevo stored procedure (requiere `ddl_sp` en `MSSQL_ALLOWED_OPS`) |
+| `tool_alter_sp` | Modifica un stored procedure existente (requiere `ddl_sp` en `MSSQL_ALLOWED_OPS`) |
+| `tool_drop_sp` | Elimina un stored procedure (requiere `ddl_sp` y `allow_destructive=True`) |
 
 ---
 
