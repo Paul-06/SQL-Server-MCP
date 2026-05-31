@@ -43,8 +43,10 @@ class Settings:
     encrypt: str = os.getenv("MSSQL_ENCRYPT", "yes")
     trust_cert: str = os.getenv("MSSQL_TRUST_CERT", "no")
     timeout: int = int(os.getenv("MSSQL_TIMEOUT", "30"))
+    query_timeout: int = int(os.getenv("MSSQL_QUERY_TIMEOUT", "0"))
     pool_size: int = int(os.getenv("MSSQL_POOL_SIZE", "5"))
     char_encoding: str = os.getenv("MSSQL_CHAR_ENCODING", "cp1252")
+    write_encoding: str = os.getenv("MSSQL_WRITE_ENCODING", "cp1252")
 
     # ── Seguridad ─────────────────────────────────────────────
     allowed_ops: FrozenSet[str] = field(
@@ -59,6 +61,7 @@ class Settings:
 
     # ── Logging ───────────────────────────────────────────────
     log_queries: bool = _bool(os.getenv("MSSQL_LOG_QUERIES", "true"))
+    log_params: bool = _bool(os.getenv("MSSQL_LOG_PARAMS", "true"))
     log_level: str = os.getenv("MSSQL_LOG_LEVEL", "INFO")
 
     # ── Cadena de conexión pyodbc ─────────────────────────────

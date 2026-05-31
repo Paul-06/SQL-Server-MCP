@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from config import get_connection, rows_to_dicts, settings
+from config import get_connection, log_query, rows_to_dicts, settings
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +78,7 @@ def execute_query(
 
     base_sql += f" OFFSET {offset} ROWS FETCH NEXT {page_size + 1} ROWS ONLY"
 
-    if settings.log_queries:
-        logger.info("[SELECT] %s | params=%s", base_sql, params)
+    log_query(logger, "SELECT", base_sql, params)
 
     with get_connection() as conn:
         cursor = conn.cursor()

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from config import get_connection, rows_to_dicts, settings
+from config import get_connection, log_query, rows_to_dicts, settings
 
 logger = logging.getLogger(__name__)
 
@@ -57,17 +57,19 @@ def insert_record(
 
     params = list(data.values())
 
-    if settings.log_queries:
-        logger.info("[INSERT] %s | params=%s", sql, params)
+    log_query(logger, "INSERT", sql, params)
 
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(sql, params)
         if return_generated:
+            # Avanzar al result set de SCOPE_IDENTITY() si el INSERT no produce filas
+            if cursor.description is None:
+                cursor.nextset()
             row = cursor.fetchone()
             generated_id = row[0] if row else None
             return {"inserted": 1, "generated_id": generated_id}
-        return {"inserted": 1}
+        return {"inserted": 1, "message": "Registro insertado correctamente."}
 
 
 # ── INSERT masivo (bulk) ──────────────────────────────────────────────────────
@@ -78,6 +80,7 @@ def bulk_insert(
     schema: str = "dbo",
     database: Optional[str] = None,
     batch_size: int = 500,
+    transactional: bool = True,
 ) -> dict[str, Any]:
     """
     Inserta múltiples registros de forma eficiente usando executemany.
@@ -85,11 +88,14 @@ def bulk_insert(
 
     Parámetros
     ----------
-    table      : Nombre de la tabla.
-    rows       : Lista de dicts, todos deben tener las mismas claves.
-    schema     : Schema SQL (default 'dbo').
-    database   : Overridea la base de datos del .env.
-    batch_size : Filas por lote (default 500, máx recomendado 1000).
+    table         : Nombre de la tabla.
+    rows          : Lista de dicts, todos deben tener las mismas claves.
+    schema        : Schema SQL (default 'dbo').
+    database      : Overridea la base de datos del .env.
+    batch_size    : Filas por lote (default 500, máx recomendado 1000).
+    transactional : Si True (default), todo se ejecuta en una sola transacción
+                    atómica. Si False, cada lote se commitea individualmente
+                    (los errores no afectan lotes anteriores).
 
     Retorna
     -------
@@ -113,21 +119,64 @@ def bulk_insert(
     total_inserted = 0
     batches = 0
 
-    # Procesamos en lotes para no saturar la conexión
-    for i in range(0, len(rows), batch_size):
-        batch = rows[i : i + batch_size]
-        params_batch = [list(r.values()) for r in batch]
-        try:
-            with get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.fast_executemany = True   # Optimización específica de pyodbc para SQL Server
-                cursor.executemany(sql, params_batch)
-            total_inserted += len(batch)
-            batches += 1
-            logger.info("[BULK INSERT] lote %d: %d filas insertadas.", batches, len(batch))
-        except Exception as exc:
-            errors.append(f"Lote {batches + 1} (filas {i}-{i + len(batch)}): {exc}")
-            logger.error("[BULK INSERT] Error en lote %d: %s", batches + 1, exc)
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            if transactional:
+                # Modo transaccional: todos los lotes se ejecutan primero,
+                # luego se commitean juntos. Si alguno falla, rollback total.
+                for i in range(0, len(rows), batch_size):
+                    batch = rows[i : i + batch_size]
+                    params_batch = [list(r.values()) for r in batch]
+                    try:
+                        cursor.fast_executemany = True
+                        cursor.executemany(sql, params_batch)
+                    except Exception:
+                        cursor.fast_executemany = False
+                        try:
+                            cursor.executemany(sql, params_batch)
+                        except Exception as exc:
+                            raise RuntimeError(
+                                f"Transacción cancelada — todas las filas revertidas. "
+                                f"Error en lote {batches + 1} (filas {i}-{i + len(batch)}): {exc}"
+                            )
+                    total_inserted += len(batch)
+                    batches += 1
+            else:
+                # Modo no transaccional: cada lote se commitea individualmente
+                for i in range(0, len(rows), batch_size):
+                    batch = rows[i : i + batch_size]
+                    params_batch = [list(r.values()) for r in batch]
+                    try:
+                        cursor.fast_executemany = True
+                        cursor.executemany(sql, params_batch)
+                        conn.commit()
+                        total_inserted += len(batch)
+                        batches += 1
+                        logger.info("[BULK INSERT] lote %d: %d filas insertadas.", batches, len(batch))
+                    except Exception as exc:
+                        conn.rollback()
+                        try:
+                            cursor.fast_executemany = False
+                            cursor.executemany(sql, params_batch)
+                            conn.commit()
+                            total_inserted += len(batch)
+                            batches += 1
+                            logger.info("[BULK INSERT] lote %d: %d filas (fallback slow).", batches, len(batch))
+                        except Exception as exc2:
+                            conn.rollback()
+                            errors.append(f"Lote {batches + 1} (filas {i}-{i + len(batch)}): {exc}")
+                            logger.error("[BULK INSERT] Error en lote %d: %s", batches + 1, exc2)
+
+    except RuntimeError as e:
+        errors.append(str(e))
+        # total_inserted se queda en el valor que tenía antes del error
+        # (si el error fue en el lote 2, total_inserted tiene el lote 1).
+        # En modo transactional, eso no es correcto — debe ser 0.
+        if transactional:
+            total_inserted = 0
+            batches = 0
 
     return {"inserted": total_inserted, "batches": batches, "errors": errors}
 
@@ -173,8 +222,7 @@ def update_record(
     sql = f"UPDATE {db_prefix}[{schema}].[{table}] SET {set_clause} WHERE {where}"
     params = list(fields.values()) + list(where_params)
 
-    if settings.log_queries:
-        logger.info("[UPDATE] %s | params=%s", sql, params)
+    log_query(logger, "UPDATE", sql, params)
 
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -219,8 +267,7 @@ def delete_record(
     sql = f"DELETE FROM {db_prefix}[{schema}].[{table}] WHERE {where}"
     params = list(where_params)
 
-    if settings.log_queries:
-        logger.info("[DELETE] %s | params=%s", sql, params)
+    log_query(logger, "DELETE", sql, params)
 
     with get_connection() as conn:
         cursor = conn.cursor()

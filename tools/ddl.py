@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Any, Optional
 
-from config import get_connection, settings
+from config import get_connection, log_query, settings
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +113,7 @@ def create_table(
     else:
         ddl = f"CREATE TABLE {full_name} (\n{columns_sql}\n);"
 
-    if settings.log_queries:
-        logger.info("[DDL CREATE] %s", ddl)
+    log_query(logger, "DDL CREATE", ddl)
 
     with get_connection() as conn:
         conn.cursor().execute(ddl)
@@ -172,8 +171,7 @@ def alter_table(
             raise ValueError("Se requiere 'column_type' para ALTER COLUMN.")
         ddl = f"ALTER TABLE {table_ref} ALTER COLUMN [{column_name}] {column_type} {null_clause};"
 
-    if settings.log_queries:
-        logger.info("[DDL ALTER] %s", ddl)
+    log_query(logger, "DDL ALTER", ddl)
 
     with get_connection() as conn:
         conn.cursor().execute(ddl)
@@ -212,10 +210,56 @@ def execute_ddl_raw(
             "Pasa allow_destructive=True si estás seguro."
         )
 
-    if settings.log_queries:
-        logger.info("[DDL RAW] %s", ddl_statement)
+    log_query(logger, "DDL RAW", ddl_statement)
 
     with get_connection() as conn:
         conn.cursor().execute(ddl_statement)
 
     return {"executed": True, "ddl": ddl_statement}
+
+
+# ── DROP TABLE ──────────────────────────────────────────────────────────────
+
+
+def drop_table(
+    table: str,
+    schema: str = "dbo",
+    database: Optional[str] = None,
+    allow_destructive: bool = False,
+) -> dict[str, Any]:
+    """
+    Elimina una tabla (DROP TABLE IF EXISTS).
+
+    ⚠️  Requiere allow_destructive=True explícito como medida de seguridad.
+
+    Parámetros
+    ----------
+    table              : Nombre de la tabla a eliminar.
+    schema             : Schema SQL (default 'dbo').
+    database           : Overridea la base de datos del .env.
+    allow_destructive  : Debe ser True para ejecutar el DROP.
+
+    Retorna
+    -------
+    {"dropped": True, "table": "<schema>.<table>"}
+    """
+    if not settings.is_op_allowed("ddl"):
+        raise PermissionError("Las operaciones DDL no están habilitadas.")
+    if not settings.is_schema_allowed(schema):
+        raise PermissionError(f"Schema '{schema}' no permitido.")
+    if not allow_destructive:
+        raise PermissionError(
+            f"DROP TABLE es una operación destructiva. "
+            f"Pasa allow_destructive=True si estás seguro de eliminar '{schema}.{table}'."
+        )
+
+    db_prefix = f"USE [{database}];\n" if database else ""
+    table_ref = f"{db_prefix}[{schema}].[{table}]"
+    ddl = f"DROP TABLE IF EXISTS {table_ref};"
+
+    log_query(logger, "DROP TABLE", ddl)
+
+    with get_connection() as conn:
+        conn.cursor().execute(ddl)
+
+    return {"dropped": True, "table": f"{schema}.{table}"}

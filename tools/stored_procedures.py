@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from config import get_connection, rows_to_dicts, settings
+from config import get_connection, log_query, rows_to_dicts, settings
 
 logger = logging.getLogger(__name__)
 
@@ -68,37 +68,35 @@ def execute_sp(
     db_prefix = f"[{database}]." if database else ""
     sp_ref = f"{db_prefix}[{schema}].[{procedure}]"
 
-    # Construir EXEC con parámetros nombrados: EXEC sp @param1=?, @param2=?
-    # Pasar solo los params que el llamador proporcionó — los demás usan DEFAULT del SP
+    # Construir EXEC con parámetros nombrados y capturar RETURN value
     if params:
         named_params = ", ".join(f"@{k} = ?" for k in params)
-        sql = f"EXEC {sp_ref} {named_params}"
+        sql = f"DECLARE @ret INT; EXEC @ret = {sp_ref} {named_params}; SELECT @ret AS return_value"
         sql_params = list(params.values())
     else:
-        sql = f"EXEC {sp_ref}"
+        sql = f"DECLARE @ret INT; EXEC @ret = {sp_ref}; SELECT @ret AS return_value"
         sql_params = []
 
-    if settings.log_queries:
-        logger.info("[EXEC SP] %s | params=%s", sql, sql_params)
+    log_query(logger, "EXEC SP", sql, sql_params)
 
     resultsets: list[dict[str, Any]] = []
+    return_value = None
 
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(sql, sql_params)
 
-        # Iterar todos los result sets que el SP devuelva
+        # Iterar todos los result sets
         while True:
             if cursor.description:
-                rs_rows = rows_to_dicts(cursor)
                 rs_cols = [col[0] for col in cursor.description]
-                resultsets.append({"columns": rs_cols, "rows": rs_rows})
+                rs_rows = rows_to_dicts(cursor)
+                if rs_cols == ["return_value"] and rs_rows:
+                    return_value = rs_rows[0]["return_value"]
+                else:
+                    resultsets.append({"columns": rs_cols, "rows": rs_rows})
             if not cursor.nextset():
                 break
-
-        # Intentar leer el RETURN value (pyodbc no lo expone directamente,
-        # pero podemos capturarlo si el SP usa OUTPUT o SELECT)
-        return_value = None
 
     return {
         "resultsets": resultsets,
@@ -273,8 +271,7 @@ def create_sp(
     sp_ref = f"[{schema}].[{procedure}]"
     ddl = f"{db_prefix}CREATE PROCEDURE {sp_ref}\n{definition}"
 
-    if settings.log_queries:
-        logger.info("[CREATE SP] %s", sp_ref)
+    log_query(logger, "CREATE SP", sp_ref)
 
     with get_connection() as conn:
         conn.cursor().execute(ddl)
@@ -315,8 +312,7 @@ def alter_sp(
     sp_ref = f"[{schema}].[{procedure}]"
     ddl = f"{db_prefix}ALTER PROCEDURE {sp_ref}\n{definition}"
 
-    if settings.log_queries:
-        logger.info("[ALTER SP] %s", sp_ref)
+    log_query(logger, "ALTER SP", sp_ref)
 
     with get_connection() as conn:
         conn.cursor().execute(ddl)
@@ -363,8 +359,7 @@ def drop_sp(
     sp_ref = f"[{schema}].[{procedure}]"
     ddl = f"{db_prefix}DROP PROCEDURE IF EXISTS {sp_ref};"
 
-    if settings.log_queries:
-        logger.info("[DROP SP] %s", sp_ref)
+    log_query(logger, "DROP SP", sp_ref)
 
     with get_connection() as conn:
         conn.cursor().execute(ddl)

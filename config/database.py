@@ -39,7 +39,9 @@ class ConnectionPool:
         # Configuración recomendada para SQL Server
         conn.setdecoding(pyodbc.SQL_CHAR, encoding=settings.char_encoding)
         conn.setdecoding(pyodbc.SQL_WCHAR, encoding="utf-16le")
-        conn.setencoding(encoding="utf-8")
+        conn.setencoding(encoding=settings.write_encoding)
+        if settings.query_timeout > 0:
+            conn.timeout = settings.query_timeout
         logger.debug("Nueva conexión creada al pool.")
         return conn
 
@@ -53,7 +55,14 @@ class ConnectionPool:
                     self._created += 1
                     return conn
             # Si el pool está lleno, esperar hasta 30 s
-            return self._pool.get(timeout=30)
+            try:
+                return self._pool.get(timeout=30)
+            except queue.Empty:
+                raise TimeoutError(
+                    "Pool de conexiones agotado. "
+                    f"Todas las {self._max} conexiones están en uso y ninguna se liberó en 30s. "
+                    "Aumenta MSSQL_POOL_SIZE o revisa fugas de conexiones."
+                )
 
     def release(self, conn: pyodbc.Connection) -> None:
         try:

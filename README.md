@@ -51,12 +51,15 @@ cp .env.example .env
 | `MSSQL_ENCRYPT` | Encriptar conexión (yes/no) | `yes` |
 | `MSSQL_TRUST_CERT` | Confiar en cert autofirmado | `no` |
 | `MSSQL_TIMEOUT` | Timeout de conexión en segundos | `30` |
+| `MSSQL_QUERY_TIMEOUT` | Timeout de queries en segundos (0=sin límite) | `0` |
 | `MSSQL_POOL_SIZE` | Tamaño del pool de conexiones | `5` |
-| `MSSQL_CHAR_ENCODING` | Encoding de columnas VARCHAR (cp1252, latin-1, utf-8) | `cp1252` |
+| `MSSQL_CHAR_ENCODING` | Encoding de lectura de columnas VARCHAR (cp1252, latin-1, utf-8) | `cp1252` |
+| `MSSQL_WRITE_ENCODING` | Encoding de escritura de datos (cp1252 para VARCHAR, utf-8 para NVARCHAR) | `cp1252` |
 | `MSSQL_ALLOWED_OPS` | Ops habilitadas (csv) | `select,insert,update,delete,exec_sp,ddl,ddl_sp` |
 | `MSSQL_ALLOWED_SCHEMAS` | Schemas permitidos (vacío = todos) | — |
 | `MSSQL_DDL_TABLE_PREFIX` | Prefijo requerido para DDL (vacío = sin restricción) | — |
 | `MSSQL_LOG_QUERIES` | Loggear queries ejecutadas | `true` |
+| `MSSQL_LOG_PARAMS` | Incluir valores de parámetros en logs | `true` |
 | `MSSQL_LOG_LEVEL` | Nivel de logging (DEBUG/INFO/WARNING/ERROR) | `INFO` |
 
 ---
@@ -107,17 +110,20 @@ Agrega esto a tu archivo de configuración de OpenCode (`opencode.json` o `openc
 ## Tools disponibles
 
 | Tool | Descripción |
-|---|---|
+|---|---|---|
+| `tool_list_databases` | Lista bases de datos disponibles en el servidor |
 | `tool_list_schemas` | Lista schemas de la BD |
 | `tool_list_tables` | Lista tablas/vistas de un schema |
 | `tool_describe_table` | Describe columnas, tipos, PKs e índices |
 | `tool_execute_query` | SELECT parametrizado con filtros y paginación |
 | `tool_insert_record` | INSERT de un registro |
-| `tool_bulk_insert` | INSERT masivo en lotes (ideal para traducciones) |
+| `tool_bulk_insert` | INSERT masivo en lotes (ideal para traducciones, soporta `transactional=True/False`) |
 | `tool_update_record` | UPDATE con WHERE obligatorio |
 | `tool_delete_record` | DELETE con WHERE obligatorio |
+| `tool_execute_transaction` | Múltiples statements en una sola transacción atómica |
 | `tool_create_table` | CREATE TABLE con IF NOT EXISTS |
 | `tool_alter_table` | ALTER TABLE ADD/ALTER COLUMN |
+| `tool_drop_table` | DROP TABLE IF EXISTS (requiere `allow_destructive=True`) |
 | `tool_execute_ddl_raw` | DDL arbitrario T-SQL (con guardia anti-DROP) |
 | `tool_list_stored_procedures` | Lista SPs del schema |
 | `tool_describe_stored_procedure` | Muestra parámetros del SP (incluye opcionales) |
@@ -125,6 +131,27 @@ Agrega esto a tu archivo de configuración de OpenCode (`opencode.json` o `openc
 | `tool_create_sp` | Crea un nuevo stored procedure (requiere `ddl_sp` en `MSSQL_ALLOWED_OPS`) |
 | `tool_alter_sp` | Modifica un stored procedure existente (requiere `ddl_sp` en `MSSQL_ALLOWED_OPS`) |
 | `tool_drop_sp` | Elimina un stored procedure (requiere `ddl_sp` y `allow_destructive=True`) |
+
+---
+
+## Consultas entre bases de datos (cross-database)
+
+Todas las tools aceptan el parámetro opcional `database` para overridear la base de datos por defecto configurada en `.env`. Esto permite operar sobre múltiples bases de datos en una misma instancia.
+
+**Ejemplos:**
+
+```sql
+-- Consultar una tabla en otra base de datos
+tool_execute_query(table="Products", database="Northwind")
+
+-- Insertar en una base de datos diferente
+tool_insert_record(table="Logs", data={...}, database="AdminDB")
+
+-- Crear tabla en base de datos específica
+tool_create_table(table="AuditLog", columns=[...], database="Northwind")
+```
+
+Si no se pasa `database`, se usa la base de datos definida en `MSSQL_DATABASE` del `.env`.
 
 ---
 

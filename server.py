@@ -32,12 +32,14 @@ from tools import (
     # DML
     insert_record, bulk_insert, update_record, delete_record,
     # DDL
-    create_table, alter_table, execute_ddl_raw,
+    create_table, alter_table, execute_ddl_raw, drop_table,
     # Stored procedures
     execute_sp, list_stored_procedures, describe_stored_procedure,
     create_sp, alter_sp, drop_sp,
     # Schema
-    list_schemas, list_tables, describe_table,
+    list_databases, list_schemas, list_tables, describe_table,
+    # Transaction
+    execute_transaction,
 )
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -66,6 +68,15 @@ mcp = FastMCP(
 # ══════════════════════════════════════════════════════════════════════════════
 # TOOLS — Schema / Introspección
 # ══════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def tool_list_databases() -> dict[str, Any]:
+    """
+    Lista las bases de datos disponibles en el servidor.
+    Excluye bases de datos del sistema (master, tempdb, model, msdb).
+    """
+    return list_databases()
+
 
 @mcp.tool()
 def tool_list_schemas(database: Optional[str] = None) -> dict[str, Any]:
@@ -172,6 +183,7 @@ def tool_bulk_insert(
     schema: str = "dbo",
     database: Optional[str] = None,
     batch_size: int = 500,
+    transactional: bool = True,
 ) -> dict[str, Any]:
     """
     Inserta múltiples registros de forma eficiente (bulk).
@@ -179,11 +191,15 @@ def tool_bulk_insert(
 
     - rows: Lista de dicts, todos con las mismas claves.
     - batch_size: Filas por lote (default 500).
+    - transactional: Si True (default), todo es atómico — ninguna fila
+      se inserta si hay algún error. Si False, cada lote se commitea
+      por separado y los errores no afectan lotes anteriores.
 
     Retorna el total insertado, número de lotes y lista de errores.
     """
     return bulk_insert(table=table, rows=rows, schema=schema,
-                       database=database, batch_size=batch_size)
+                       database=database, batch_size=batch_size,
+                       transactional=transactional)
 
 
 @mcp.tool()
@@ -223,6 +239,25 @@ def tool_delete_record(
     """
     return delete_record(table=table, where=where, where_params=where_params,
                          schema=schema, database=database)
+
+
+@mcp.tool()
+def tool_execute_transaction(
+    statements: list[dict[str, Any]],
+    database: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Ejecuta múltiples statements SQL en una sola transacción atómica.
+
+    - statements: Lista de dicts, cada uno con:
+        {"sql": "UPDATE ... WHERE id = ?", "params": [1]}
+      El parámetro "params" es opcional.
+    - database: Base de datos alternativa.
+
+    Si algún statement falla, TODA la transacción se revierte (ROLLBACK).
+    Útil para operaciones que deben ser atómicas entre varias tablas.
+    """
+    return execute_transaction(statements=statements, database=database)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -293,6 +328,26 @@ def tool_execute_ddl_raw(
     """
     return execute_ddl_raw(ddl_statement=ddl_statement,
                            allow_destructive=allow_destructive)
+
+
+@mcp.tool()
+def tool_drop_table(
+    table: str,
+    schema: str = "dbo",
+    database: Optional[str] = None,
+    allow_destructive: bool = False,
+) -> dict[str, Any]:
+    """
+    Elimina una tabla (DROP TABLE IF EXISTS).
+
+    - table: Nombre de la tabla a eliminar.
+    - schema: Schema SQL (default 'dbo').
+    - database: Base de datos alternativa.
+
+    ⚠️  allow_destructive=True es obligatorio para ejecutar el DROP.
+    """
+    return drop_table(table=table, schema=schema, database=database,
+                      allow_destructive=allow_destructive)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

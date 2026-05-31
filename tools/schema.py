@@ -49,6 +49,29 @@ def list_schemas(database: Optional[str] = None) -> dict[str, Any]:
     return {"schemas": schemas, "total": len(schemas)}
 
 
+def list_databases() -> dict[str, Any]:
+    """
+    Lista las bases de datos disponibles en el servidor.
+    Filtra bases de datos del sistema (master, tempdb, model, msdb).
+    """
+    sql = """
+    SELECT
+        name            AS [name],
+        database_id     AS [database_id],
+        create_date     AS [created],
+        state_desc      AS [state]
+    FROM sys.databases
+    WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')
+    ORDER BY name
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        databases = rows_to_dicts(cursor)
+
+    return {"databases": databases, "total": len(databases)}
+
+
 def list_tables(
     schema: str = "dbo",
     name_filter: Optional[str] = None,
@@ -75,8 +98,11 @@ def list_tables(
     db_prefix = f"USE [{database}];\n" if database else ""
     type_filter = "AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW')" if include_views else "AND t.TABLE_TYPE = 'BASE TABLE'"
 
+    params: list[Any] = [schema]
+
     if name_filter:
-        type_filter += f" AND t.TABLE_NAME LIKE '%{name_filter}%'"
+        type_filter += " AND t.TABLE_NAME LIKE ?"
+        params.append(f"%{name_filter}%")
 
     sql = f"""
     {db_prefix}
@@ -99,7 +125,7 @@ def list_tables(
 
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(sql, [schema])
+        cursor.execute(sql, params)
         tables = rows_to_dicts(cursor)
 
     return {"tables": tables, "total": len(tables), "schema": schema}
@@ -141,11 +167,15 @@ def describe_table(
         CASE WHEN kcu.COLUMN_NAME IS NOT NULL
              THEN 1 ELSE 0 END                 AS [is_pk]
     FROM INFORMATION_SCHEMA.COLUMNS c
+    LEFT JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+        ON tc.TABLE_SCHEMA = c.TABLE_SCHEMA
+        AND tc.TABLE_NAME  = c.TABLE_NAME
+        AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
     LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-        ON kcu.TABLE_SCHEMA = c.TABLE_SCHEMA
-        AND kcu.TABLE_NAME  = c.TABLE_NAME
+        ON kcu.TABLE_SCHEMA = tc.TABLE_SCHEMA
+        AND kcu.TABLE_NAME  = tc.TABLE_NAME
+        AND kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME
         AND kcu.COLUMN_NAME = c.COLUMN_NAME
-        AND kcu.CONSTRAINT_NAME LIKE 'PK_%'
     WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
     ORDER BY c.ORDINAL_POSITION
     """
