@@ -110,7 +110,7 @@ Agrega esto a tu archivo de configuración de OpenCode (`opencode.json` o `openc
 ## Tools disponibles
 
 | Tool | Descripción |
-|---|---|---|
+|---|---|
 | `tool_list_databases` | Lista bases de datos disponibles en el servidor |
 | `tool_list_schemas` | Lista schemas de la BD |
 | `tool_list_tables` | Lista tablas/vistas de un schema |
