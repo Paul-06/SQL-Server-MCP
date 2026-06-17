@@ -51,6 +51,28 @@ class TestExecuteSp:
 
         assert result["params_used"] == ["Id"]
 
+    def test_execute_sp_accepts_qualified_procedure_name(self):
+        mock_cursor = make_mock_cursor(columns=["Total"], rows=[[42]])
+        mock_cursor.nextset.return_value = None
+        mock_conn = make_mock_connection(mock_cursor)
+
+        executed_sql = []
+
+        def capture_execute(sql, params=None):
+            executed_sql.append(sql)
+            return mock_cursor
+
+        mock_cursor.execute.side_effect = capture_execute
+
+        p = _mock_settings()
+        with patch(f"{MODULE}.get_connection", return_value=make_mock_cm(mock_conn)):
+            from tools.stored_procedures import execute_sp
+            result = execute_sp(procedure="[GENERAL].[sp_GetById]", params={"Id": 5})
+        p.stop()
+
+        assert "EXEC @ret = [GENERAL].[sp_GetById] @Id = ?" in executed_sql[0]
+        assert result["procedure"] == "GENERAL.sp_GetById"
+
     def test_execute_sp_return_value_captured(self):
         mock_cursor = MagicMock()
         mock_cursor.description = [("return_value", None, None, None, None, None, None)]

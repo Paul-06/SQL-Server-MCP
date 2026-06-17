@@ -144,7 +144,7 @@ class TestPermissions:
     def test_select_blocked(self):
         p = _mock_settings_for("tools.query", is_op_allowed=False)
         from tools.query import execute_query
-        with pytest.raises(PermissionError, match="SELECT no está habilitada"):
+        with pytest.raises(PermissionError, match="SELECT no esta habilitada"):
             execute_query(table="T")
         p.stop()
 

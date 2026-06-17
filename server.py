@@ -29,6 +29,8 @@ from config import settings, test_connection
 from tools import (
     # Query
     execute_query,
+    # Raw SELECT
+    execute_raw_select,
     # DML
     insert_record, bulk_insert, update_record, delete_record,
     # DDL
@@ -61,7 +63,13 @@ mcp = FastMCP(
         "(INSERT individual o masivo, UPDATE, DELETE), DDL (CREATE TABLE, ALTER TABLE), "
         "y llamadas a stored procedures con parámetros opcionales. "
         "Siempre usa 'describe_table' o 'list_tables' antes de construir queries "
-        "si no conoces la estructura de la tabla."
+        "si no conoces la estructura de la tabla.\n\n"
+        "Para queries estructuradas con filtros y paginación usa 'tool_execute_query' "
+        "(soporta columnas simples y expresiones con funciones como COUNT, SUM, MIN, MAX, "
+        "además de TOP, DISTINCT, GROUP BY y HAVING).\n\n"
+        "Para queries avanzadas que requieran CTEs, subconsultas, window functions, "
+        "JOINs complejos entre múltiples tablas, o cualquier SELECT arbitrario, "
+        "usa 'tool_execute_raw_select'."
     ),
 )
 
@@ -131,6 +139,10 @@ def tool_execute_query(
     where: Optional[str] = None,
     where_params: Optional[list[Any]] = None,
     order_by: Optional[str] = None,
+    group_by: Optional[str] = None,
+    having: Optional[str] = None,
+    top: Optional[int] = None,
+    distinct: bool = False,
     page: int = 1,
     page_size: int = 100,
     database: Optional[str] = None,
@@ -139,19 +151,54 @@ def tool_execute_query(
     Ejecuta un SELECT parametrizado y seguro.
 
     - table: Tabla o vista a consultar.
-    - columns: Lista de columnas (None = todas).
-    - where: Condición WHERE con '?' como placeholder. Ej: "id = ? AND activo = ?"
+    - columns: Lista de columnas o expresiones (None = todas).
+               Las expresiones con funciones (COUNT, SUM, MIN, MAX, etc.),
+               AS, parentesis o * se pasan sin brackets automaticamente.
+               Ej: ["COUNT(*) AS Total", "id"] -> "COUNT(*) AS Total, [id]"
+    - where: Condicion WHERE con '?' como placeholder. Ej: "id = ? AND activo = ?"
     - where_params: Valores para los '?' del WHERE.
     - order_by: Ordenamiento. Ej: "nombre ASC, fecha DESC".
-    - page / page_size: Paginación (page_size máx 1000).
+    - group_by: Columnas para GROUP BY. Ej: "UNIDAD_MINERA, ESTADO".
+    - having: Condicion HAVING (solo si group_by esta definido).
+    - top: Si se especifica, usa TOP N en vez de paginacion OFFSET/FETCH.
+    - distinct: Si True, agrega DISTINCT al SELECT.
+    - page / page_size: Paginacion (page_size max 1000). Ignorado si top esta definido.
     - database: Base de datos alternativa.
     """
     return execute_query(
         table=table, schema=schema, columns=columns,
         where=where, where_params=where_params,
-        order_by=order_by, page=page, page_size=page_size,
+        order_by=order_by, group_by=group_by, having=having,
+        top=top, distinct=distinct,
+        page=page, page_size=page_size,
         database=database,
     )
+
+
+@mcp.tool()
+def tool_execute_raw_select(
+    sql: str,
+    params: Optional[list[Any]] = None,
+    page: int = 1,
+    page_size: int = 100,
+    database: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Ejecuta un SELECT arbitrario (JOINs, CTEs, subconsultas, funciones ventana, etc.).
+
+    ⚠️  Solo se permiten sentencias SELECT. Cualquier intento de INSERT,
+        UPDATE, DELETE, DDL o EXEC será rechazado por seguridad.
+        Para stored procedures usa tool_execute_sp.
+
+    - sql: SELECT completo con '?' como placeholders.
+           Ej: "SELECT o.Id, c.Name FROM Orders o JOIN Customers c
+                ON o.CustomerID = c.CustomerID WHERE o.Status = ?"
+    - params: Valores para los '?' del WHERE (opcional).
+    - page / page_size: Paginación (page_size máx 1000).
+    - database: Base de datos alternativa (override del .env).
+    """
+    return execute_raw_select(sql=sql, params=params, page=page,
+                              page_size=page_size, database=database)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -393,7 +440,7 @@ def tool_execute_sp(
     """
     Ejecuta un stored procedure con parámetros nombrados opcionales.
 
-    - procedure: Nombre del SP (sin schema ni '@').
+    - procedure: Nombre del SP (sin '@'). Acepta "MiSP" o "schema.MiSP".
     - params: Dict {nombre_param: valor}. Omite los parámetros opcionales
               que quieras dejar en su valor DEFAULT del SP.
 

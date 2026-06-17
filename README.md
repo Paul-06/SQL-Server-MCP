@@ -115,7 +115,8 @@ Agrega esto a tu archivo de configuración de OpenCode (`opencode.json` o `openc
 | `tool_list_schemas` | Lista schemas de la BD |
 | `tool_list_tables` | Lista tablas/vistas de un schema |
 | `tool_describe_table` | Describe columnas, tipos, PKs e índices |
-| `tool_execute_query` | SELECT parametrizado con filtros y paginación |
+| `tool_execute_query` | SELECT parametrizado con filtros, paginación, TOP, DISTINCT, GROUP BY, HAVING y expresiones (COUNT, SUM, MIN, MAX, etc.) |
+| `tool_execute_raw_select` | SELECT arbitrario (JOINs, CTEs, subconsultas, ventanas) con paginación |
 | `tool_insert_record` | INSERT de un registro |
 | `tool_bulk_insert` | INSERT masivo en lotes (ideal para traducciones, soporta `transactional=True/False`) |
 | `tool_update_record` | UPDATE con WHERE obligatorio |
@@ -127,7 +128,7 @@ Agrega esto a tu archivo de configuración de OpenCode (`opencode.json` o `openc
 | `tool_execute_ddl_raw` | DDL arbitrario T-SQL (con guardia anti-DROP) |
 | `tool_list_stored_procedures` | Lista SPs del schema |
 | `tool_describe_stored_procedure` | Muestra parámetros del SP (incluye opcionales) |
-| `tool_execute_sp` | Ejecuta SP con parámetros nombrados opcionales |
+| `tool_execute_sp` | Ejecuta SP con parámetros nombrados opcionales; acepta `procedure` simple o `schema.procedure` |
 | `tool_create_sp` | Crea un nuevo stored procedure (requiere `ddl_sp` en `MSSQL_ALLOWED_OPS`) |
 | `tool_alter_sp` | Modifica un stored procedure existente (requiere `ddl_sp` en `MSSQL_ALLOWED_OPS`) |
 | `tool_drop_sp` | Elimina un stored procedure (requiere `ddl_sp` y `allow_destructive=True`) |
@@ -170,6 +171,39 @@ El agente usará:
 El agente usará:
 1. `tool_describe_stored_procedure` → ve que IdIdioma es opcional
 2. `tool_execute_sp` → llama con `{"IdIdioma": 2}`
+
+**Consulta avanzada con JOIN:**
+> "Dame todas las órdenes del cliente 'Acme' con el nombre del vendedor"
+
+El agente usará `tool_execute_raw_select` con:
+```sql
+SELECT o.Id, o.OrderDate, e.FirstName + ' ' + e.LastName AS SalesPerson
+FROM Orders o
+JOIN Employees e ON o.EmployeeID = e.EmployeeID
+JOIN Customers c ON o.CustomerID = c.CustomerID
+WHERE c.CustomerName = ?
+```
+
+**Importante: stored procedures no van en `tool_execute_raw_select`**
+
+`tool_execute_raw_select` acepta solo `SELECT` o `WITH ... SELECT`.
+Si intentas algo como:
+
+```sql
+EXEC [GENERAL].[SP_LISTA_PAIS] @ID = ''
+```
+
+debes usar:
+
+```text
+tool_execute_sp(procedure="SP_LISTA_PAIS", schema="GENERAL", params={"ID": ""})
+```
+
+Tambien puedes usar el nombre calificado:
+
+```text
+tool_execute_sp(procedure="GENERAL.SP_LISTA_PAIS", params={"ID": ""})
+```
 
 ---
 

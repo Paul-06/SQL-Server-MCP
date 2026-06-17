@@ -10,11 +10,33 @@ los que necesita y SQL Server aplica los DEFAULT del SP.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Optional
 
 from config import get_connection, log_query, rows_to_dicts, settings
 
 logger = logging.getLogger(__name__)
+
+_QUALIFIED_PROCEDURE_PATTERN = re.compile(
+    r"^\s*(?:\[(?P<schema_br>[^\]]+)\]|(?P<schema_plain>[^.\[\]]+))"
+    r"\s*\.\s*"
+    r"(?:\[(?P<proc_br>[^\]]+)\]|(?P<proc_plain>[^.\[\]]+))\s*$"
+)
+
+
+def _normalize_identifier(identifier: str) -> str:
+    return identifier.strip().strip("[]")
+
+
+def _resolve_procedure_reference(procedure: str, schema: str) -> tuple[str, str]:
+    """Acepta procedure simple o calificado como schema.procedure."""
+    match = _QUALIFIED_PROCEDURE_PATTERN.match(procedure)
+    if match:
+        resolved_schema = match.group("schema_br") or match.group("schema_plain") or schema
+        resolved_procedure = match.group("proc_br") or match.group("proc_plain") or procedure
+        return _normalize_identifier(resolved_schema), _normalize_identifier(resolved_procedure)
+
+    return _normalize_identifier(schema), _normalize_identifier(procedure)
 
 
 # ── EJECUTAR SP ───────────────────────────────────────────────────────────────
@@ -35,7 +57,7 @@ def execute_sp(
 
     Parámetros
     ----------
-    procedure : Nombre del stored procedure (sin schema).
+    procedure : Nombre del stored procedure. Acepta "MiSP" o "schema.MiSP".
     params    : Dict {nombre_param: valor}. Omite parámetros opcionales.
                 Nota: los nombres NO incluyen el '@'; se añade automáticamente.
     schema    : Schema SQL (default 'dbo').
@@ -61,6 +83,8 @@ def execute_sp(
     """
     if not settings.is_op_allowed("exec_sp"):
         raise PermissionError("La ejecución de stored procedures no está habilitada.")
+    schema, procedure = _resolve_procedure_reference(procedure, schema)
+
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
 

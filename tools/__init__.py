@@ -5,6 +5,7 @@ from .ddl import create_table, alter_table, execute_ddl_raw, drop_table
 from .stored_procedures import execute_sp, list_stored_procedures, describe_stored_procedure, create_sp, alter_sp, drop_sp
 from .schema import list_databases, list_schemas, list_tables, describe_table
 from .transaction import execute_transaction
+from .raw_query import execute_raw_select
 
 __all__ = [
     "execute_query",
@@ -14,4 +15,5 @@ __all__ = [
     "create_sp", "alter_sp", "drop_sp",
     "list_databases", "list_schemas", "list_tables", "describe_table",
     "execute_transaction",
+    "execute_raw_select",
 ]
