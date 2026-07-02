@@ -116,7 +116,7 @@ Agrega esto a tu archivo de configuración de OpenCode (`opencode.json` o `openc
 | `tool_list_tables` | Lista tablas/vistas de un schema |
 | `tool_describe_table` | Describe columnas, tipos, PKs e índices |
 | `tool_execute_query` | SELECT parametrizado con filtros, paginación, TOP, DISTINCT, GROUP BY, HAVING y expresiones (COUNT, SUM, MIN, MAX, etc.) |
-| `tool_execute_raw_select` | SELECT arbitrario (JOINs, CTEs, subconsultas, ventanas) con paginación |
+| `tool_execute_raw_select` | SELECT arbitrario (JOINs, CTEs, subconsultas, ventanas) con paginación; omite OFFSET/FETCH si el SQL contiene TOP |
 | `tool_insert_record` | INSERT de un registro |
 | `tool_bulk_insert` | INSERT masivo en lotes (ideal para traducciones, soporta `transactional=True/False`) |
 | `tool_update_record` | UPDATE con WHERE obligatorio |
@@ -127,32 +127,30 @@ Agrega esto a tu archivo de configuración de OpenCode (`opencode.json` o `openc
 | `tool_drop_table` | DROP TABLE IF EXISTS (requiere `allow_destructive=True`) |
 | `tool_execute_ddl_raw` | DDL arbitrario T-SQL (con guardia anti-DROP) |
 | `tool_list_stored_procedures` | Lista SPs del schema |
-| `tool_describe_stored_procedure` | Muestra parámetros del SP (incluye opcionales) |
-| `tool_execute_sp` | Ejecuta SP con parámetros nombrados opcionales; acepta `procedure` simple o `schema.procedure` |
+| `tool_describe_stored_procedure` | Muestra parámetros del SP (incluye opcionales y metadata de TVP cuando aplica) |
+| `tool_execute_sp` | Ejecuta SP con parámetros nombrados opcionales; acepta `procedure` simple o `schema.procedure` y TVP automáticos desde listas de filas |
 | `tool_create_sp` | Crea un nuevo stored procedure (requiere `ddl_sp` en `MSSQL_ALLOWED_OPS`) |
 | `tool_alter_sp` | Modifica un stored procedure existente (requiere `ddl_sp` en `MSSQL_ALLOWED_OPS`) |
 | `tool_drop_sp` | Elimina un stored procedure (requiere `ddl_sp` y `allow_destructive=True`) |
 
 ---
 
-## Consultas entre bases de datos (cross-database)
+## Base de datos configurada
 
-Todas las tools aceptan el parámetro opcional `database` para overridear la base de datos por defecto configurada en `.env`. Esto permite operar sobre múltiples bases de datos en una misma instancia.
+El MCP opera únicamente sobre la base definida en `MSSQL_DATABASE` del `.env`. Las tools mantienen el parámetro opcional `database` por compatibilidad, pero no permite cambiar de base en runtime.
 
 **Ejemplos:**
 
 ```sql
--- Consultar una tabla en otra base de datos
-tool_execute_query(table="Products", database="Northwind")
+-- Usa la base configurada en MSSQL_DATABASE
+tool_execute_query(table="Products")
 
--- Insertar en una base de datos diferente
-tool_insert_record(table="Logs", data={...}, database="AdminDB")
+-- Pasar la misma base configurada es equivalente a omitir database
+tool_execute_query(table="Products", database="TumiCloud")
 
--- Crear tabla en base de datos específica
-tool_create_table(table="AuditLog", columns=[...], database="Northwind")
+-- Pasar otra base se rechaza
+tool_execute_query(table="Products", database="OtraBD")
 ```
-
-Si no se pasa `database`, se usa la base de datos definida en `MSSQL_DATABASE` del `.env`.
 
 ---
 
@@ -171,6 +169,65 @@ El agente usará:
 El agente usará:
 1. `tool_describe_stored_procedure` → ve que IdIdioma es opcional
 2. `tool_execute_sp` → llama con `{"IdIdioma": 2}`
+
+**Pregunta al agente:**
+> "Llama al SP sp_SaveItems pasando dos filas al TVP Items"
+
+El agente usará:
+1. `tool_describe_stored_procedure` → ve que `@Items` es TVP y qué columnas espera
+2. `tool_execute_sp` → llama con filas JSON normales
+
+Formato recomendado para TVP:
+
+```text
+tool_execute_sp(
+  procedure="sp_SaveItems",
+  params={
+    "Items": [
+      {"ProdCode": 1, "Qty": 2},
+      {"ProdCode": 2, "Qty": 5}
+    ]
+  }
+)
+```
+
+Tambien se aceptan filas posicionales, usando el orden de columnas que devuelve
+`tool_describe_stored_procedure`:
+
+```text
+tool_execute_sp(
+  procedure="sp_SaveItems",
+  params={
+    "Items": [
+      [1, 2],
+      [2, 5]
+    ]
+  }
+)
+```
+
+Si llamas al MCP desde Python, tambien puedes pasar tuplas por fila:
+
+```python
+tool_execute_sp(
+    procedure="sp_SaveItems",
+    params={"Items": [(1, 2), (2, 5)]},
+)
+```
+
+Para enviar un TVP vacio, pasa una lista vacia:
+
+```text
+tool_execute_sp(procedure="sp_SaveItems", params={"Items": []})
+```
+
+**Observaciones de validación real**
+
+- `tool_describe_stored_procedure` detecta automáticamente si un parámetro es TVP y expone `type_schema`, `type_name` y `tvp_columns` en el orden correcto.
+- Con TVP en formato `list[dict]`, el orden de claves no importa: el MCP reordena los valores según `tvp_columns`.
+- Con TVP en formato `list[list]` o `list[tuple]`, cada fila se interpreta por posición usando el orden de `tvp_columns`.
+- Un TVP vacío (`[]`) se envía correctamente a SQL Server como TVP tipado vacío.
+- Si una fila tiene columnas faltantes, extra o una longitud incorrecta, el MCP falla antes de ejecutar el SP y devuelve un error claro, por ejemplo: `Fila 1 invalida para TVP '@Items': faltan columnas: Qty.`
 
 **Consulta avanzada con JOIN:**
 > "Dame todas las órdenes del cliente 'Acme' con el nombre del vendedor"

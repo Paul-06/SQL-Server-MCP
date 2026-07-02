@@ -56,6 +56,7 @@ GRANT VIEW DEFINITION TO [mcp_agent_role];
 
 GRANT CREATE TABLE TO [mcp_agent_role];
 GRANT CREATE PROCEDURE TO [mcp_agent_role];
+GRANT CREATE TYPE TO [mcp_agent_role];
 GO
 
 DECLARE @sql nvarchar(max) = N'';

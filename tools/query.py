@@ -14,6 +14,7 @@ import re
 from typing import Any, Optional
 
 from config import get_connection, log_query, rows_to_dicts, settings
+from tools._database import assert_configured_database
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def execute_query(
     distinct    : Si True, agrega DISTINCT al SELECT.
     page        : Numero de pagina (1-based). Ignorado si top esta definido.
     page_size   : Registros por pagina (max 1000). Ignorado si top esta definido.
-    database    : Overridea la base de datos del .env para esta query.
+    database    : Debe omitirse o coincidir con MSSQL_DATABASE.
 
     Retorna
     -------
@@ -79,11 +80,11 @@ def execute_query(
         raise PermissionError("La operacion SELECT no esta habilitada en la configuracion.")
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"El schema '{schema}' no esta en la lista de schemas permitidos.")
+    assert_configured_database(database, settings.database)
 
     params: list[Any] = list(where_params or [])
     col_clause = ", ".join(_format_column(c) for c in columns) if columns else "*"
-    db_prefix = f"[{database}]." if database else ""
-    table_ref = f"{db_prefix}[{schema}].[{table}]"
+    table_ref = f"[{schema}].[{table}]"
 
     distinct_kw = "DISTINCT " if distinct else ""
     top_kw = f"TOP {top} " if top else ""

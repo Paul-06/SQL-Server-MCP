@@ -50,3 +50,52 @@ def make_mock_cm(mock_conn: MagicMock) -> MagicMock:
     cm.__enter__.return_value = mock_conn
     cm.__exit__.return_value = None
     return cm
+
+
+def make_scripted_cursor(executions: list[dict[str, Any]]) -> MagicMock:
+    """Simula un cursor con múltiples execute() y nextset() programados."""
+    cursor = MagicMock()
+    state: dict[str, Any] = {
+        "current_rows": [],
+        "nextsets": [],
+    }
+
+    def apply_result(result: dict[str, Any] | None) -> None:
+        if not result:
+            cursor.description = None
+            state["current_rows"] = []
+            return
+
+        columns = result.get("columns")
+        cursor.description = (
+            [(c, None, None, None, None, None, None) for c in columns]
+            if columns else None
+        )
+        state["current_rows"] = result.get("rows", [])
+
+    def execute_side(sql, params=None):
+        if not executions:
+            raise AssertionError(f"execute() inesperado: {sql!r}")
+        current = executions.pop(0)
+        apply_result(current)
+        state["nextsets"] = list(current.get("nextsets", []))
+        return cursor
+
+    def fetchall_side():
+        return state["current_rows"]
+
+    def nextset_side():
+        if not state["nextsets"]:
+            cursor.description = None
+            state["current_rows"] = []
+            return None
+
+        next_result = state["nextsets"].pop(0)
+        apply_result(next_result)
+        return True
+
+    cursor.execute.side_effect = execute_side
+    cursor.fetchall.side_effect = fetchall_side
+    cursor.nextset.side_effect = nextset_side
+    cursor.description = None
+    return cursor

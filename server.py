@@ -61,7 +61,7 @@ mcp = FastMCP(
         "Servidor MCP para SQL Server. "
         "Permite ejecutar consultas SELECT parametrizadas, operaciones DML "
         "(INSERT individual o masivo, UPDATE, DELETE), DDL (CREATE TABLE, ALTER TABLE), "
-        "y llamadas a stored procedures con parámetros opcionales. "
+        "y llamadas a stored procedures con parámetros opcionales y TVP automáticos. "
         "Siempre usa 'describe_table' o 'list_tables' antes de construir queries "
         "si no conoces la estructura de la tabla.\n\n"
         "Para queries estructuradas con filtros y paginación usa 'tool_execute_query' "
@@ -91,6 +91,7 @@ def tool_list_schemas(database: Optional[str] = None) -> dict[str, Any]:
     """
     Lista los schemas disponibles en la base de datos.
     Respeta la lista de schemas permitidos en la configuración.
+    Si se pasa database, debe coincidir con MSSQL_DATABASE.
     """
     return list_schemas(database=database)
 
@@ -108,7 +109,7 @@ def tool_list_tables(
     - schema: Schema SQL a listar (default 'dbo').
     - name_filter: Filtro parcial de nombre.
     - include_views: Si True, incluye vistas.
-    - database: Base de datos alternativa (override del .env).
+    - database: Opcional; debe coincidir con MSSQL_DATABASE si se informa.
     """
     return list_tables(schema=schema, name_filter=name_filter,
                        include_views=include_views, database=database)
@@ -163,7 +164,7 @@ def tool_execute_query(
     - top: Si se especifica, usa TOP N en vez de paginacion OFFSET/FETCH.
     - distinct: Si True, agrega DISTINCT al SELECT.
     - page / page_size: Paginacion (page_size max 1000). Ignorado si top esta definido.
-    - database: Base de datos alternativa.
+    - database: Opcional; debe coincidir con MSSQL_DATABASE si se informa.
     """
     return execute_query(
         table=table, schema=schema, columns=columns,
@@ -182,23 +183,29 @@ def tool_execute_raw_select(
     page: int = 1,
     page_size: int = 100,
     database: Optional[str] = None,
+    paginate: bool = True,
 ) -> dict[str, Any]:
     """
     Ejecuta un SELECT arbitrario (JOINs, CTEs, subconsultas, funciones ventana, etc.).
 
-    ⚠️  Solo se permiten sentencias SELECT. Cualquier intento de INSERT,
-        UPDATE, DELETE, DDL o EXEC será rechazado por seguridad.
-        Para stored procedures usa tool_execute_sp.
+    Solo se permiten sentencias SELECT. Cualquier intento de INSERT,
+    UPDATE, DELETE, DDL o EXEC sera rechazado por seguridad.
+    Para stored procedures usa tool_execute_sp.
 
     - sql: SELECT completo con '?' como placeholders.
            Ej: "SELECT o.Id, c.Name FROM Orders o JOIN Customers c
                 ON o.CustomerID = c.CustomerID WHERE o.Status = ?"
     - params: Valores para los '?' del WHERE (opcional).
-    - page / page_size: Paginación (page_size máx 1000).
-    - database: Base de datos alternativa (override del .env).
+    - page / page_size: Paginacion (page_size max 1000). Ignorado si el SQL
+      contiene TOP o si paginate=False.
+    - paginate: Si True (default), inyecta OFFSET/FETCH automaticamente. Se
+      desactiva solo si el SQL ya contiene TOP. Pasa False si no quieres
+      paginacion.
+    - database: Opcional; debe coincidir con MSSQL_DATABASE si se informa.
     """
     return execute_raw_select(sql=sql, params=params, page=page,
-                              page_size=page_size, database=database)
+                              page_size=page_size, database=database,
+                              paginate=paginate)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -299,7 +306,7 @@ def tool_execute_transaction(
     - statements: Lista de dicts, cada uno con:
         {"sql": "UPDATE ... WHERE id = ?", "params": [1]}
       El parámetro "params" es opcional.
-    - database: Base de datos alternativa.
+    - database: Opcional; debe coincidir con MSSQL_DATABASE si se informa.
 
     Si algún statement falla, TODA la transacción se revierte (ROLLBACK).
     Útil para operaciones que deben ser atómicas entre varias tablas.
@@ -389,7 +396,7 @@ def tool_drop_table(
 
     - table: Nombre de la tabla a eliminar.
     - schema: Schema SQL (default 'dbo').
-    - database: Base de datos alternativa.
+    - database: Opcional; debe coincidir con MSSQL_DATABASE si se informa.
 
     ⚠️  allow_destructive=True es obligatorio para ejecutar el DROP.
     """
@@ -423,7 +430,8 @@ def tool_describe_stored_procedure(
 ) -> dict[str, Any]:
     """
     Describe los parámetros de un stored procedure.
-    Muestra nombre, tipo, si es OUTPUT y si tiene valor DEFAULT (es opcional).
+    Muestra nombre, tipo, si es OUTPUT, si tiene valor DEFAULT y si algún
+    parámetro es TVP, incluyendo sus columnas esperadas.
     Úsala antes de ejecutar un SP para saber qué parámetros acepta.
     """
     return describe_stored_procedure(procedure=procedure, schema=schema,
@@ -443,9 +451,13 @@ def tool_execute_sp(
     - procedure: Nombre del SP (sin '@'). Acepta "MiSP" o "schema.MiSP".
     - params: Dict {nombre_param: valor}. Omite los parámetros opcionales
               que quieras dejar en su valor DEFAULT del SP.
+              Si un parámetro del SP es TVP, puedes pasar sus filas como
+              lista de dicts, listas o tuplas y el servidor resolverá el
+              type/schema automáticamente.
 
     Ejemplo: {"IdIdioma": 2}  →  EXEC dbo.sp_GetCatalogo @IdIdioma = 2
     El SP puede tener otros parámetros con DEFAULT que no necesitas pasar.
+    Ejemplo TVP: {"Items": [{"ProdCode": 1, "Qty": 2}, {"ProdCode": 2, "Qty": 5}]}
 
     Retorna todos los result sets que devuelva el SP.
     """
@@ -467,7 +479,7 @@ def tool_create_sp(
     - definition: Cuerpo completo en T-SQL con parámetros y AS BEGIN...END.
                   NO incluyas CREATE PROCEDURE ni el nombre.
     - schema: Schema SQL (default 'dbo').
-    - database: Base de datos alternativa.
+    - database: Opcional; debe coincidir con MSSQL_DATABASE si se informa.
 
     Requiere ddl_sp en MSSQL_ALLOWED_OPS.
     """

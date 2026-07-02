@@ -13,6 +13,7 @@ import re
 from typing import Any, Optional
 
 from config import get_connection, log_query, settings
+from tools._database import assert_configured_database
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def create_table(
                       "identity"   : True,           # IDENTITY(1,1) si True
                     }
     schema        : Schema SQL (default 'dbo').
-    database      : Overridea la base de datos del .env.
+    database      : Debe omitirse o coincidir con MSSQL_DATABASE.
     if_not_exists : Si True, usa IF NOT EXISTS para no romper en re-ejecución.
 
     Retorna
@@ -58,6 +59,7 @@ def create_table(
         raise PermissionError("Las operaciones DDL no están habilitadas en la configuración.")
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
+    assert_configured_database(database, settings.database)
 
     # Validar prefijo de tabla si está configurado
     if settings.ddl_table_prefix:
@@ -96,8 +98,7 @@ def create_table(
     if pk_cols:
         col_defs.append(f"  CONSTRAINT [PK_{table}] PRIMARY KEY ({', '.join(pk_cols)})")
 
-    db_prefix = f"[{database}]." if database else ""
-    full_name = f"{db_prefix}[{schema}].[{table}]"
+    full_name = f"[{schema}].[{table}]"
     columns_sql = ",\n".join(col_defs)
 
     if if_not_exists:
@@ -142,7 +143,7 @@ def alter_table(
     column_name : Nombre de la columna a agregar/modificar.
     column_type : Tipo de dato T-SQL (requerido para ADD, opcional para ALTER).
     schema      : Schema SQL (default 'dbo').
-    database    : Overridea la base de datos del .env.
+    database    : Debe omitirse o coincidir con MSSQL_DATABASE.
     nullable    : Si la columna acepta NULL (default True).
 
     Retorna
@@ -153,14 +154,14 @@ def alter_table(
         raise PermissionError("Las operaciones DDL no están habilitadas.")
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
+    assert_configured_database(database, settings.database)
 
     action_upper = action.upper()
     if action_upper not in ("ADD", "ALTER"):
         raise ValueError(f"Acción '{action}' no soportada. Use 'ADD' o 'ALTER'.")
 
     null_clause = "NULL" if nullable else "NOT NULL"
-    db_prefix = f"[{database}]." if database else ""
-    table_ref = f"{db_prefix}[{schema}].[{table}]"
+    table_ref = f"[{schema}].[{table}]"
 
     if action_upper == "ADD":
         if not column_type:
@@ -236,7 +237,7 @@ def drop_table(
     ----------
     table              : Nombre de la tabla a eliminar.
     schema             : Schema SQL (default 'dbo').
-    database           : Overridea la base de datos del .env.
+    database           : Debe omitirse o coincidir con MSSQL_DATABASE.
     allow_destructive  : Debe ser True para ejecutar el DROP.
 
     Retorna
@@ -247,14 +248,14 @@ def drop_table(
         raise PermissionError("Las operaciones DDL no están habilitadas.")
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
+    assert_configured_database(database, settings.database)
     if not allow_destructive:
         raise PermissionError(
             f"DROP TABLE es una operación destructiva. "
             f"Pasa allow_destructive=True si estás seguro de eliminar '{schema}.{table}'."
         )
 
-    db_prefix = f"USE [{database}];\n" if database else ""
-    table_ref = f"{db_prefix}[{schema}].[{table}]"
+    table_ref = f"[{schema}].[{table}]"
     ddl = f"DROP TABLE IF EXISTS {table_ref};"
 
     log_query(logger, "DROP TABLE", ddl)

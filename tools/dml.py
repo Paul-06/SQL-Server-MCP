@@ -12,6 +12,7 @@ import logging
 from typing import Any, Optional
 
 from config import get_connection, log_query, rows_to_dicts, settings
+from tools._database import assert_configured_database
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def insert_record(
     data             : Dict {columna: valor} con los campos a insertar.
     schema           : Schema SQL (default 'dbo').
     return_generated : Si True, retorna la fila recién insertada con su PK.
-    database         : Overridea la base de datos del .env.
+    database         : Debe omitirse o coincidir con MSSQL_DATABASE.
 
     Retorna
     -------
@@ -44,12 +45,12 @@ def insert_record(
         raise PermissionError("La operación INSERT no está habilitada.")
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
+    assert_configured_database(database, settings.database)
 
     cols = list(data.keys())
     col_clause = ", ".join(f"[{c}]" for c in cols)
     placeholder_clause = ", ".join("?" for _ in cols)
-    db_prefix = f"[{database}]." if database else ""
-    table_ref = f"{db_prefix}[{schema}].[{table}]"
+    table_ref = f"[{schema}].[{table}]"
 
     sql = f"INSERT INTO {table_ref} ({col_clause}) VALUES ({placeholder_clause})"
     if return_generated:
@@ -91,7 +92,7 @@ def bulk_insert(
     table         : Nombre de la tabla.
     rows          : Lista de dicts, todos deben tener las mismas claves.
     schema        : Schema SQL (default 'dbo').
-    database      : Overridea la base de datos del .env.
+    database      : Debe omitirse o coincidir con MSSQL_DATABASE.
     batch_size    : Filas por lote (default 500, máx recomendado 1000).
     transactional : Si True (default), todo se ejecuta en una sola transacción
                     atómica. Si False, cada lote se commitea individualmente
@@ -105,14 +106,14 @@ def bulk_insert(
         raise PermissionError("La operación INSERT no está habilitada.")
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
+    assert_configured_database(database, settings.database)
     if not rows:
         return {"inserted": 0, "batches": 0, "errors": []}
 
     cols = list(rows[0].keys())
     col_clause = ", ".join(f"[{c}]" for c in cols)
     placeholder_clause = ", ".join("?" for _ in cols)
-    db_prefix = f"[{database}]." if database else ""
-    table_ref = f"{db_prefix}[{schema}].[{table}]"
+    table_ref = f"[{schema}].[{table}]"
 
     sql = f"INSERT INTO {table_ref} ({col_clause}) VALUES ({placeholder_clause})"
     errors: list[str] = []
@@ -202,7 +203,7 @@ def update_record(
                    Ejemplo: "id = ? AND activo = ?"
     where_params : Valores para los '?' del WHERE.
     schema       : Schema SQL (default 'dbo').
-    database     : Overridea la base de datos del .env.
+    database     : Debe omitirse o coincidir con MSSQL_DATABASE.
 
     Retorna
     -------
@@ -212,14 +213,14 @@ def update_record(
         raise PermissionError("La operación UPDATE no está habilitada.")
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
+    assert_configured_database(database, settings.database)
     if not fields:
         raise ValueError("El dict 'fields' no puede estar vacío.")
     if not where or not where.strip():
         raise ValueError("Se requiere una condición WHERE para UPDATE (seguridad).")
 
     set_clause = ", ".join(f"[{c}] = ?" for c in fields)
-    db_prefix = f"[{database}]." if database else ""
-    sql = f"UPDATE {db_prefix}[{schema}].[{table}] SET {set_clause} WHERE {where}"
+    sql = f"UPDATE [{schema}].[{table}] SET {set_clause} WHERE {where}"
     params = list(fields.values()) + list(where_params)
 
     log_query(logger, "UPDATE", sql, params)
@@ -250,7 +251,7 @@ def delete_record(
     where        : Condición WHERE usando '?' como placeholder.
     where_params : Valores para los '?' del WHERE.
     schema       : Schema SQL (default 'dbo').
-    database     : Overridea la base de datos del .env.
+    database     : Debe omitirse o coincidir con MSSQL_DATABASE.
 
     Retorna
     -------
@@ -260,11 +261,11 @@ def delete_record(
         raise PermissionError("La operación DELETE no está habilitada.")
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
+    assert_configured_database(database, settings.database)
     if not where or not where.strip():
         raise ValueError("Se requiere una condición WHERE para DELETE (seguridad).")
 
-    db_prefix = f"[{database}]." if database else ""
-    sql = f"DELETE FROM {db_prefix}[{schema}].[{table}] WHERE {where}"
+    sql = f"DELETE FROM [{schema}].[{table}] WHERE {where}"
     params = list(where_params)
 
     log_query(logger, "DELETE", sql, params)

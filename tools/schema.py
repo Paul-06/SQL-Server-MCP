@@ -12,6 +12,7 @@ import logging
 from typing import Any, Optional
 
 from config import get_connection, rows_to_dicts, settings
+from tools._database import assert_configured_database
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +23,8 @@ def list_schemas(database: Optional[str] = None) -> dict[str, Any]:
 
     Retorna solo los schemas que estén en MSSQL_ALLOWED_SCHEMAS (si aplica).
     """
-    db_prefix = f"USE [{database}];\n" if database else ""
-    sql = f"""
-    {db_prefix}
+    assert_configured_database(database, settings.database)
+    sql = """
     SELECT
         s.name          AS [schema],
         s.schema_id     AS [schema_id],
@@ -86,7 +86,7 @@ def list_tables(
     schema        : Schema SQL (default 'dbo').
     name_filter   : Filtro parcial de nombre (LIKE).
     include_views : Si True, incluye vistas además de tablas.
-    database      : Overridea la base de datos del .env.
+    database      : Debe omitirse o coincidir con MSSQL_DATABASE.
 
     Retorna
     -------
@@ -95,7 +95,7 @@ def list_tables(
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
 
-    db_prefix = f"USE [{database}];\n" if database else ""
+    assert_configured_database(database, settings.database)
     type_filter = "AND t.TABLE_TYPE IN ('BASE TABLE', 'VIEW')" if include_views else "AND t.TABLE_TYPE = 'BASE TABLE'"
 
     params: list[Any] = [schema]
@@ -105,7 +105,6 @@ def list_tables(
         params.append(f"%{name_filter}%")
 
     sql = f"""
-    {db_prefix}
     SELECT
         t.TABLE_NAME            AS [name],
         t.TABLE_TYPE            AS [type],
@@ -150,11 +149,10 @@ def describe_table(
     if not settings.is_schema_allowed(schema):
         raise PermissionError(f"Schema '{schema}' no permitido.")
 
-    db_prefix = f"USE [{database}];\n" if database else ""
+    assert_configured_database(database, settings.database)
 
     # Columnas
-    col_sql = f"""
-    {db_prefix}
+    col_sql = """
     SELECT
         c.COLUMN_NAME                           AS [name],
         c.DATA_TYPE                             AS [type],
@@ -181,8 +179,7 @@ def describe_table(
     """
 
     # Índices
-    idx_sql = f"""
-    {db_prefix}
+    idx_sql = """
     SELECT
         i.name                                              AS [index_name],
         CASE i.type_desc

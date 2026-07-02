@@ -3,7 +3,7 @@ tools/raw_query.py
 ------------------
 Herramienta: execute_raw_select
 Ejecuta consultas SELECT arbitrarias (JOINs, CTEs, subconsultas, funciones
-ventana, etc.) con parametrización y paginación OFFSET/FETCH.
+ventana, etc.) con parametrizacion y paginacion OFFSET/FETCH.
 
 A diferencia de execute_query (que opera sobre una sola tabla/vista),
 esta herramienta acepta cualquier SELECT con la estructura que necesites.
@@ -12,7 +12,7 @@ Seguridad:
 - Solo permite sentencias que comiencen con SELECT o WITH ... SELECT
 - Bloquea INSERT, UPDATE, DELETE, MERGE, EXEC, CREATE, ALTER, DROP,
   TRUNCATE, GRANT, REVOKE
-- Respeta la configuración de MSSQL_ALLOWED_OPS (requiere "select")
+- Respeta la configuracion de MSSQL_ALLOWED_OPS (requiere "select")
 """
 
 from __future__ import annotations
@@ -22,12 +22,12 @@ import re
 from typing import Any, Optional
 
 from config import get_connection, log_query, rows_to_dicts, settings
+from tools._database import assert_configured_database
 
 logger = logging.getLogger(__name__)
 
-# ── Validación de seguridad ───────────────────────────────────────────────────
+# ── Validacion de seguridad ──────────────────────────────────────────────────
 
-# Patrones prohibidos en el statement completo
 _FORBIDDEN_KEYWORDS = re.compile(
     r"\b(INSERT|UPDATE|DELETE|MERGE|EXEC(?:UTE)?|"
     r"CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE)\b",
@@ -42,6 +42,8 @@ _EXEC_PATTERN = re.compile(
 )
 
 _EXEC_PARAM_PATTERN = re.compile(r"@(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+_TOP_PATTERN = re.compile(r"\bTOP\b\s+\d+", re.IGNORECASE)
 
 
 def _build_exec_guidance(sql: str) -> Optional[str]:
@@ -76,7 +78,6 @@ def _validate_sql(sql: str) -> None:
     """
     stripped = sql.strip()
 
-    # Remover comentarios del inicio para ver el primer keyword real
     clean = re.sub(
         r"^(?:\s*--[^\n]*\n\s*|\s*/\*.*?\*/\s*)*",
         "",
@@ -85,13 +86,12 @@ def _validate_sql(sql: str) -> None:
     )
 
     if not clean:
-        raise PermissionError("SQL vacío.")
+        raise PermissionError("SQL vacio.")
 
     exec_guidance = _build_exec_guidance(clean)
     if exec_guidance:
         raise PermissionError(exec_guidance)
 
-    # Bloquear keywords de escritura en todo el statement
     if _FORBIDDEN_KEYWORDS.search(clean):
         raise PermissionError(
             "La sentencia contiene operaciones no permitidas "
@@ -99,7 +99,6 @@ def _validate_sql(sql: str) -> None:
             "Solo se permiten SELECTs."
         )
 
-    # Verificar que comience con SELECT o WITH
     if not re.match(r"^\s*(?:WITH|SELECT)\s", clean, re.IGNORECASE):
         raise PermissionError(
             "Solo se permiten sentencias SELECT (o WITH ... SELECT). "
@@ -107,7 +106,7 @@ def _validate_sql(sql: str) -> None:
         )
 
 
-# ── Lógica principal ──────────────────────────────────────────────────────────
+# ── Logica principal ──────────────────────────────────────────────────────────
 
 
 def execute_raw_select(
@@ -116,59 +115,69 @@ def execute_raw_select(
     page: int = 1,
     page_size: int = 100,
     database: Optional[str] = None,
+    paginate: bool = True,
 ) -> dict[str, Any]:
     """
-    Ejecuta un SELECT arbitrario y seguro con paginación opcional.
+    Ejecuta un SELECT arbitrario y seguro con paginacion opcional.
 
-    Parámetros
+    Parametros
     ----------
     sql       : Sentencia SELECT completa con '?' como placeholders.
                 Ej: "SELECT o.*, c.Name FROM Orders o JOIN Customers c
                      ON o.CustomerID = c.CustomerID WHERE o.Status = ?"
     params    : Lista de valores para los placeholders '?' (opcional).
-    page      : Número de página (1-based). Default 1.
-    page_size : Filas por página (máx 1000). Default 100.
-    database  : Overridea la base de datos del .env (opcional).
+    page      : Numero de pagina (1-based). Default 1.
+    page_size : Filas por pagina (max 1000). Default 100.
+    database  : Debe omitirse o coincidir con MSSQL_DATABASE.
+    paginate  : Si True (default), inyecta OFFSET/FETCH para paginacion.
+                Se desactiva automaticamente si el SQL ya contiene TOP.
+                Pasa False si tu query ya tiene su propio TOP o no necesita
+                paginacion.
 
     Retorna
     -------
     {
-      "columns"  : list[str],       ← nombres de columnas
-      "rows"     : list[dict],      ← filas como dicts
+      "columns"  : list[str],
+      "rows"     : list[dict],
       "page"     : int,
       "page_size": int,
-      "has_more" : bool             ← True si hay más páginas
+      "has_more" : bool
     }
     """
     if not settings.is_op_allowed("select"):
         raise PermissionError(
-            "La operación SELECT no está habilitada en la configuración."
+            "La operacion SELECT no esta habilitada en la configuracion."
         )
 
     _validate_sql(sql)
+    assert_configured_database(database, settings.database)
 
     params = params or []
-    page_size = min(max(1, page_size), 1000)
-    offset = (max(1, page) - 1) * page_size
-
-    db_prefix = f"USE [{database}];\n" if database else ""
     sql_clean = sql.rstrip().rstrip(";").strip()
 
-    # Agregar paginación OFFSET/FETCH
-    has_order_by = bool(
-        re.search(r"\bORDER\s+BY\s", sql_clean, re.IGNORECASE)
-    )
-    if has_order_by:
-        pagination = (
-            f" OFFSET {offset} ROWS FETCH NEXT {page_size + 1} ROWS ONLY"
-        )
-    else:
-        pagination = (
-            f" ORDER BY (SELECT NULL)"
-            f" OFFSET {offset} ROWS FETCH NEXT {page_size + 1} ROWS ONLY"
-        )
+    has_top = bool(_TOP_PATTERN.search(sql_clean))
+    use_pagination = paginate and not has_top
 
-    final_sql = f"{db_prefix}{sql_clean}{pagination}"
+    if use_pagination:
+        page_size = min(max(1, page_size), 1000)
+        offset = (max(1, page) - 1) * page_size
+
+        has_order_by = bool(
+            re.search(r"\bORDER\s+BY\s", sql_clean, re.IGNORECASE)
+        )
+        if has_order_by:
+            pagination = (
+                f" OFFSET {offset} ROWS FETCH NEXT {page_size + 1} ROWS ONLY"
+            )
+        else:
+            pagination = (
+                f" ORDER BY (SELECT NULL)"
+                f" OFFSET {offset} ROWS FETCH NEXT {page_size + 1} ROWS ONLY"
+            )
+
+        final_sql = f"{sql_clean}{pagination}"
+    else:
+        final_sql = sql_clean
 
     log_query(logger, "RAW SELECT", final_sql, params)
 
@@ -177,14 +186,23 @@ def execute_raw_select(
         cursor.execute(final_sql, params)
         all_rows = rows_to_dicts(cursor)
 
-    has_more = len(all_rows) > page_size
-    rows = all_rows[:page_size]
+    if use_pagination:
+        has_more = len(all_rows) > page_size
+        rows = all_rows[:page_size]
+        result_page = page
+        result_page_size = page_size
+    else:
+        has_more = False
+        rows = all_rows
+        result_page = 1
+        result_page_size = len(rows)
+
     columns_out = list(rows[0].keys()) if rows else []
 
     return {
         "columns": columns_out,
         "rows": rows,
-        "page": page,
-        "page_size": page_size,
+        "page": result_page,
+        "page_size": result_page_size,
         "has_more": has_more,
     }

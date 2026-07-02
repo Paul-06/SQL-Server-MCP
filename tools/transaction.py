@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from config import get_connection, log_query, rows_to_dicts, settings
+from tools._database import assert_configured_database
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def execute_transaction(
     statements : Lista de dicts, cada uno con:
                  - "sql": str — Statement T-SQL con placeholders '?'.
                  - "params": list (opcional) — Valores para los '?'.
-    database   : Base de datos alternativa (override del .env).
+    database   : Debe omitirse o coincidir con MSSQL_DATABASE.
 
     Retorna
     -------
@@ -41,7 +42,7 @@ def execute_transaction(
     if not statements:
         return {"success": True, "results": [], "error": None}
 
-    db_prefix = f"USE [{database}];\n" if database else ""
+    assert_configured_database(database, settings.database)
     results: list[dict[str, Any]] = []
 
     try:
@@ -52,10 +53,7 @@ def execute_transaction(
                 sql = stmt["sql"]
                 params = stmt.get("params") or []
 
-                if database:
-                    cursor.execute(f"USE [{database}]")
-
-                log_query(logger, "TRANSACTION", f"{db_prefix}{sql}", params)
+                log_query(logger, "TRANSACTION", sql, params)
                 cursor.execute(sql, params)
 
                 result_entry: dict[str, Any] = {"statement": idx + 1, "rows_affected": cursor.rowcount}
