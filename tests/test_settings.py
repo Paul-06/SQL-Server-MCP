@@ -114,6 +114,16 @@ class TestDdlTablePrefix:
         assert s.ddl_table_prefix == "tbl_,cat_"
 
 
+class TestDdlSchemaOwner:
+    def test_default_owner(self):
+        s = Settings(ddl_schema_owner="mcp_agent_role")
+        assert s.ddl_schema_owner == "mcp_agent_role"
+
+    def test_custom_owner(self):
+        s = Settings(ddl_schema_owner="schema_owner")
+        assert s.ddl_schema_owner == "schema_owner"
+
+
 class TestSingletonSettings:
     """Pruebas contra el singleton real (con .env cargado)."""
 

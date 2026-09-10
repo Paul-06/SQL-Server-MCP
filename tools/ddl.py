@@ -1,7 +1,7 @@
 """
 tools/ddl.py
 ------------
-Herramientas DDL: create_table, alter_table, execute_ddl_raw.
+Herramientas DDL: create_table, alter_table, create_schema, execute_ddl_raw.
 Permiten crear y modificar esquemas directamente desde el agente de IA,
 con las guardas de seguridad configuradas en el .env.
 """
@@ -14,6 +14,8 @@ from typing import Any, Optional
 
 from config import get_connection, log_query, settings
 from tools._database import assert_configured_database
+from tools._identifiers import quote_identifier
+from tools._sql_safety import reject_direct_schema_creation
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +182,58 @@ def alter_table(
     return {"altered": True, "ddl": ddl}
 
 
+# ── CREATE SCHEMA ─────────────────────────────────────────────────────────────
+
+def create_schema(
+    schema: str,
+    database: Optional[str] = None,
+    if_not_exists: bool = True,
+) -> dict[str, Any]:
+    """Crea un schema nuevo usando el propietario configurado.
+
+    El nombre del propietario no se recibe desde el agente: se toma de
+    ``MSSQL_DDL_SCHEMA_OWNER`` para mantener una política fija por entorno.
+    """
+    if not settings.is_op_allowed("ddl"):
+        raise PermissionError("Las operaciones DDL no están habilitadas.")
+
+    schema_name = schema.strip() if isinstance(schema, str) else schema
+    schema_ref = quote_identifier(schema_name, "El schema")
+    if not settings.is_schema_allowed(schema_name):
+        raise PermissionError(f"Schema '{schema_name}' no permitido.")
+
+    assert_configured_database(database, settings.database)
+
+    owner_name = settings.ddl_schema_owner
+    owner_ref = quote_identifier(owner_name, "El propietario del schema")
+    ddl = f"CREATE SCHEMA {schema_ref} AUTHORIZATION {owner_ref};"
+
+    log_query(logger, "CREATE SCHEMA", ddl)
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        if if_not_exists:
+            cursor.execute("SELECT SCHEMA_ID(?) AS [schema_id];", [schema_name])
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return {
+                    "created": False,
+                    "schema": schema_name,
+                    "owner": owner_name,
+                    "ddl": ddl,
+                }
+
+        cursor.execute(ddl)
+
+    return {
+        "created": True,
+        "schema": schema_name,
+        "owner": owner_name,
+        "ddl": ddl,
+    }
+
+
 # ── DDL RAW (escape hatch con validación) ────────────────────────────────────
 
 def execute_ddl_raw(
@@ -204,6 +258,8 @@ def execute_ddl_raw(
     """
     if not settings.is_op_allowed("ddl"):
         raise PermissionError("Las operaciones DDL no están habilitadas.")
+
+    reject_direct_schema_creation(ddl_statement)
 
     if not allow_destructive and _DESTRUCTIVE_KEYWORDS.search(ddl_statement):
         raise PermissionError(

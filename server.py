@@ -34,7 +34,7 @@ from tools import (
     # DML
     insert_record, bulk_insert, update_record, delete_record,
     # DDL
-    create_table, alter_table, execute_ddl_raw, drop_table,
+    create_table, alter_table, create_schema, execute_ddl_raw, drop_table,
     # Stored procedures
     execute_sp, list_stored_procedures, describe_stored_procedure,
     create_sp, alter_sp, drop_sp,
@@ -60,8 +60,10 @@ mcp = FastMCP(
     instructions=(
         "Servidor MCP para SQL Server. "
         "Permite ejecutar consultas SELECT parametrizadas, operaciones DML "
-        "(INSERT individual o masivo, UPDATE, DELETE), DDL (CREATE TABLE, ALTER TABLE), "
+        "(INSERT individual o masivo, UPDATE, DELETE), DDL "
+        "(CREATE SCHEMA, CREATE TABLE, ALTER TABLE), "
         "y llamadas a stored procedures con parámetros opcionales y TVP automáticos. "
+        "Los schemas nuevos usan el propietario configurado. "
         "Siempre usa 'describe_table' o 'list_tables' antes de construir queries "
         "si no conoces la estructura de la tabla.\n\n"
         "Para queries estructuradas con filtros y paginación usa 'tool_execute_query' "
@@ -315,7 +317,7 @@ def tool_execute_transaction(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TOOLS — DDL (CREATE / ALTER TABLE)
+# TOOLS — DDL (CREATE SCHEMA / CREATE / ALTER TABLE)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @mcp.tool()
@@ -343,6 +345,26 @@ def tool_create_table(
     """
     return create_table(table=table, columns=columns, schema=schema,
                         database=database, if_not_exists=if_not_exists)
+
+
+@mcp.tool()
+def tool_create_schema(
+    schema: str,
+    database: Optional[str] = None,
+    if_not_exists: bool = True,
+) -> dict[str, Any]:
+    """
+    Crea un schema nuevo en SQL Server.
+
+    - schema: Nombre simple del schema.
+    - database: Opcional; debe coincidir con MSSQL_DATABASE.
+    - if_not_exists: Si True, no falla si el schema ya existe.
+
+    El propietario se toma de MSSQL_DDL_SCHEMA_OWNER y no puede ser elegido
+    por el agente. Requiere `ddl` en MSSQL_ALLOWED_OPS.
+    """
+    return create_schema(schema=schema, database=database,
+                         if_not_exists=if_not_exists)
 
 
 @mcp.tool()

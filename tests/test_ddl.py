@@ -22,6 +22,8 @@ def _mock_settings(**kwargs):
     mock.is_op_allowed.return_value = kwargs.get("is_op_allowed", True)
     mock.is_schema_allowed.return_value = kwargs.get("is_schema_allowed", True)
     mock.ddl_table_prefix = kwargs.get("ddl_table_prefix", "")
+    mock.ddl_schema_owner = kwargs.get("ddl_schema_owner", "mcp_agent_role")
+    mock.database = kwargs.get("database", "master")
     return p
 
 
@@ -120,6 +122,83 @@ class TestAlterTable:
         p.stop()
 
 
+class TestCreateSchema:
+    def test_create_schema_basic(self):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_conn = make_mock_connection(mock_cursor)
+
+        p = _mock_settings()
+        with patch(f"{MODULE}.get_connection", return_value=mock_conn.__enter__.return_value):
+            from tools.ddl import create_schema
+            result = create_schema(schema="Reporting")
+        p.stop()
+
+        assert result["created"] is True
+        assert result["schema"] == "Reporting"
+        assert result["owner"] == "mcp_agent_role"
+        assert "CREATE SCHEMA [Reporting] AUTHORIZATION [mcp_agent_role]" in result["ddl"]
+        assert mock_cursor.execute.call_count == 2
+        assert mock_cursor.execute.call_args_list[0].args[1] == ["Reporting"]
+
+    def test_create_schema_is_idempotent(self):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = [42]
+        mock_conn = make_mock_connection(mock_cursor)
+
+        p = _mock_settings()
+        with patch(f"{MODULE}.get_connection", return_value=mock_conn.__enter__.return_value):
+            from tools.ddl import create_schema
+            result = create_schema(schema="Reporting", if_not_exists=True)
+        p.stop()
+
+        assert result["created"] is False
+        assert result["schema"] == "Reporting"
+        assert mock_cursor.execute.call_count == 1
+
+    def test_create_schema_requires_ddl(self):
+        p = _mock_settings(is_op_allowed=False)
+        from tools.ddl import create_schema
+        with pytest.raises(PermissionError, match="DDL no están habilitadas"):
+            create_schema(schema="Reporting")
+        p.stop()
+
+    def test_create_schema_requires_allowed_schema(self):
+        p = _mock_settings(is_schema_allowed=False)
+        from tools.ddl import create_schema
+        with pytest.raises(PermissionError, match="no permitido"):
+            create_schema(schema="Secret")
+        p.stop()
+
+    def test_create_schema_rejects_other_database(self):
+        p = _mock_settings(database="TumiCloud")
+        from tools.ddl import create_schema
+        with pytest.raises(PermissionError, match="base configurada"):
+            create_schema(schema="Reporting", database="OtherDb")
+        p.stop()
+
+    def test_create_schema_escapes_identifier(self):
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_conn = make_mock_connection(mock_cursor)
+
+        p = _mock_settings()
+        with patch(f"{MODULE}.get_connection", return_value=mock_conn.__enter__.return_value):
+            from tools.ddl import create_schema
+            result = create_schema(schema="safe]name")
+        p.stop()
+
+        assert "CREATE SCHEMA [safe]]name] AUTHORIZATION [mcp_agent_role];" == result["ddl"]
+
+    @pytest.mark.parametrize("schema", ["", "   ", "a" * 129])
+    def test_create_schema_rejects_invalid_identifier(self, schema):
+        p = _mock_settings()
+        from tools.ddl import create_schema
+        with pytest.raises(ValueError):
+            create_schema(schema=schema)
+        p.stop()
+
+
 class TestExecuteDdlRaw:
     def test_destructive_blocked(self):
         p = _mock_settings()
@@ -158,3 +237,10 @@ class TestExecuteDdlRaw:
         p.stop()
 
         assert result["executed"] is True
+
+    def test_create_schema_must_use_structured_tool(self):
+        p = _mock_settings()
+        from tools.ddl import execute_ddl_raw
+        with pytest.raises(PermissionError, match="tool_create_schema"):
+            execute_ddl_raw("CREATE /* bypass */ SCHEMA Reporting")
+        p.stop()

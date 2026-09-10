@@ -1,7 +1,7 @@
 # SQL Server MCP Server
 
 Servidor MCP custom para Microsoft SQL Server.  
-Soporta SELECT, INSERT (individual y bulk), UPDATE, DELETE, DDL (CREATE/ALTER TABLE) y Stored Procedures con parámetros opcionales.
+Soporta SELECT, INSERT (individual y bulk), UPDATE, DELETE, DDL (CREATE SCHEMA, CREATE/ALTER TABLE) y Stored Procedures con parámetros opcionales.
 
 ---
 
@@ -58,6 +58,7 @@ cp .env.example .env
 | `MSSQL_ALLOWED_OPS` | Ops habilitadas (csv) | `select,insert,update,delete,exec_sp,ddl,ddl_sp` |
 | `MSSQL_ALLOWED_SCHEMAS` | Schemas permitidos (vacío = todos) | — |
 | `MSSQL_DDL_TABLE_PREFIX` | Prefijo requerido para DDL (vacío = sin restricción) | — |
+| `MSSQL_DDL_SCHEMA_OWNER` | Propietario fijo de los schemas creados por el MCP | `mcp_agent_role` |
 | `MSSQL_LOG_QUERIES` | Loggear queries ejecutadas | `true` |
 | `MSSQL_LOG_PARAMS` | Incluir valores de parámetros en logs | `true` |
 | `MSSQL_LOG_LEVEL` | Nivel de logging (DEBUG/INFO/WARNING/ERROR) | `INFO` |
@@ -123,6 +124,7 @@ Agrega esto a tu archivo de configuración de OpenCode (`opencode.json` o `openc
 | `tool_delete_record` | DELETE con WHERE obligatorio |
 | `tool_execute_transaction` | Múltiples statements en una sola transacción atómica |
 | `tool_create_table` | CREATE TABLE con IF NOT EXISTS |
+| `tool_create_schema` | CREATE SCHEMA con propietario configurado e IF NOT EXISTS |
 | `tool_alter_table` | ALTER TABLE ADD/ALTER COLUMN |
 | `tool_drop_table` | DROP TABLE IF EXISTS (requiere `allow_destructive=True`) |
 | `tool_execute_ddl_raw` | DDL arbitrario T-SQL (con guardia anti-DROP) |
@@ -268,8 +270,23 @@ tool_execute_sp(procedure="GENERAL.SP_LISTA_PAIS", params={"ID": ""})
 
 - WHERE es **obligatorio** en UPDATE y DELETE para evitar operaciones masivas accidentales.
 - DROP y TRUNCATE están **bloqueados** en `execute_ddl_raw` salvo que pases `allow_destructive=True`.
+- `CREATE SCHEMA` debe ejecutarse mediante `tool_create_schema`; las rutas SQL genéricas lo bloquean.
 - Puedes limitar schemas y operaciones desde el `.env` sin tocar código.
 - Las queries van **parametrizadas** (placeholders `?`) para prevenir SQL injection.
+
+### Creación de schemas
+
+`tool_create_schema` requiere `ddl` en `MSSQL_ALLOWED_OPS` y crea el schema con el propietario definido en `MSSQL_DDL_SCHEMA_OWNER`. El agente no puede elegir el propietario en cada llamada.
+
+Si `MSSQL_ALLOWED_SCHEMAS` está vacío, el MCP no limita el nombre del schema. Si contiene valores, el schema solicitado debe aparecer explícitamente en esa lista. Esta configuración solo controla la autorización de la aplicación; SQL Server también debe conceder el permiso `CREATE SCHEMA` a la cuenta o rol de conexión.
+
+La provisión recomendada para el rol del MCP es:
+
+```sql
+GRANT CREATE SCHEMA TO [mcp_agent_role];
+```
+
+El rol debe existir y poder ser propietario del schema. Por defecto, `mcp_agent_role` ya cumple esta condición cuando `mcp-agent` es miembro del rol.
 
 ### Recomendación: usuario dedicado con permisos limitados
 

@@ -12,6 +12,7 @@ from typing import Any
 
 from config import get_connection, log_query, rows_to_dicts, settings
 from tools._database import assert_configured_database
+from tools._sql_safety import reject_direct_schema_creation
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,9 @@ def execute_transaction(
     """
     if not statements:
         return {"success": True, "results": [], "error": None}
+
+    for stmt in statements:
+        reject_direct_schema_creation(stmt["sql"])
 
     assert_configured_database(database, settings.database)
     results: list[dict[str, Any]] = []

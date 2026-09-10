@@ -22,6 +22,9 @@ BEGIN
 END;
 GO
 
+GRANT VIEW SERVER PERFORMANCE STATE TO [mcp-agent];
+GO
+
 IF USER_ID(N'mcp-agent') IS NULL
 BEGIN
     CREATE USER [mcp-agent] FOR LOGIN [mcp-agent];
@@ -57,6 +60,7 @@ GRANT VIEW DEFINITION TO [mcp_agent_role];
 GRANT CREATE TABLE TO [mcp_agent_role];
 GRANT CREATE PROCEDURE TO [mcp_agent_role];
 GRANT CREATE TYPE TO [mcp_agent_role];
+GRANT CREATE SCHEMA TO [mcp_agent_role];
 GO
 
 DECLARE @sql nvarchar(max) = N'';

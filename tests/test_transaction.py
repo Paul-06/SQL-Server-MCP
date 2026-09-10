@@ -135,6 +135,12 @@ def _mock_txn_settings(**kwargs):
 
 
 class TestExecuteTransaction:
+    def test_create_schema_must_use_structured_tool(self):
+        from tools.transaction import execute_transaction
+
+        with pytest.raises(PermissionError, match="tool_create_schema"):
+            execute_transaction(statements=[{"sql": "CREATE SCHEMA Reporting"}])
+
     def test_single_statement(self):
         mock_cursor = MagicMock()
         mock_cursor.description = None

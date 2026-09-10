@@ -58,6 +58,7 @@ class Settings:
         default_factory=lambda: _set(os.getenv("MSSQL_ALLOWED_SCHEMAS", ""))
     )
     ddl_table_prefix: str = os.getenv("MSSQL_DDL_TABLE_PREFIX", "")
+    ddl_schema_owner: str = os.getenv("MSSQL_DDL_SCHEMA_OWNER", "mcp_agent_role")
 
     # ── Logging ───────────────────────────────────────────────
     log_queries: bool = _bool(os.getenv("MSSQL_LOG_QUERIES", "true"))
